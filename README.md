@@ -4,8 +4,8 @@ A fast, lightweight, and native desktop HTTP client built in Rust with [GPUI](ht
 
 ## Status
 
-> **v0.3 — Headers editor**
-> 3-panel shell, method selector, URL input, and headers key-value editor are functional. Network and storage layers are next.
+> **v0.4 — Request editor complete**
+> Method selector, URL input, headers key-value editor, and JSON body textarea (with syntax highlighting) are functional. Network and storage layers are next.
 
 ## Architecture
 
@@ -47,7 +47,7 @@ src/
 - [x] 3-panel layout shell
 - [x] URL input + HTTP method selector (GET, POST, PUT, DELETE)
 - [x] Headers editor (key-value pairs, add/remove rows)
-- [ ] JSON body textarea
+- [x] JSON body textarea (code editor with syntax highlighting)
 - [ ] Async request execution and response display
 - [ ] Save/load requests from local files
 

@@ -36,6 +36,7 @@ pub struct AppView {
     method: HttpMethod,
     url_input: Entity<InputState>,
     headers_editor: Entity<HeadersEditor>,
+    body_input: Entity<InputState>,
 }
 
 impl AppView {
@@ -44,10 +45,16 @@ impl AppView {
             InputState::new(window, cx).placeholder("https://api.example.com/resource")
         });
         let headers_editor = cx.new(|cx| HeadersEditor::new(window, cx));
+        let body_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("json")
+                .placeholder("// JSON request body")
+        });
         Self {
             method: HttpMethod::Get,
             url_input,
             headers_editor,
+            body_input,
         }
     }
 }
@@ -76,9 +83,13 @@ impl Render for AppView {
         let on_send = cx.listener(|this, _: &ClickEvent, _, cx| {
             let url = this.url_input.read(cx).value();
             let headers = this.headers_editor.read(cx).headers(cx);
+            let body = this.body_input.read(cx).value();
             println!("[Makako] {} {}", this.method.label(), url);
             for (k, v) in &headers {
                 println!("  {}: {}", k, v);
+            }
+            if !body.trim().is_empty() {
+                println!("  body: {}", body);
             }
         });
 
@@ -174,15 +185,29 @@ impl Render for AppView {
                             )
                             .child(self.headers_editor.clone()),
                     )
-                    // Body placeholder (next iteration)
+                    // Body section
                     .child(
                         div()
                             .flex_1()
-                            .px_3()
-                            .py_2()
-                            .text_sm()
-                            .text_color(rgb(0x444466))
-                            .child("Body"),
+                            .flex()
+                            .flex_col()
+                            // Section label
+                            .child(
+                                div()
+                                    .px_3()
+                                    .py_2()
+                                    .text_sm()
+                                    .text_color(rgb(0x7777aa))
+                                    .child("Body"),
+                            )
+                            // JSON code editor — fills remaining vertical space
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .px_3()
+                                    .pb_3()
+                                    .child(Input::new(&self.body_input).h_full()),
+                            ),
                     ),
             )
             // ── Response panel ────────────────────────────────────
