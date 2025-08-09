@@ -4,8 +4,7 @@ A fast, lightweight, and native desktop HTTP client built in Rust with [GPUI](ht
 
 ## Status
 
-> **v2.0 — Complete: Collections & Environments**
-> File-explorer sidebar with collapsible folders, click-to-load requests, and `{{variable}}` interpolation via `env.json`.
+> **v3.0 — In progress: Tabs, Code Export & Assertions**
 
 ## Architecture
 
@@ -13,53 +12,54 @@ A fast, lightweight, and native desktop HTTP client built in Rust with [GPUI](ht
 src/
 ├── main.rs                       # Entry point — opens the window and wires modules
 ├── ui_module/
-│   ├── mod.rs                    # AppView: 3-panel shell, request bar, method selector
+│   ├── mod.rs                    # AppView: 3-panel shell, tab bar, sidebar
 │   ├── headers_editor.rs         # HeadersEditor sub-view (key-value pairs)
 │   └── response_panel.rs         # ResponsePanel sub-view (status, latency, body)
 ├── network_module/
 │   └── mod.rs                    # HTTP execution (reqwest blocking + oneshot channel)
 └── storage_module/
-    └── mod.rs                    # JSON persistence in ~/Documents/Makako/default/
+    └── mod.rs                    # JSON persistence + env loading + interpolation
 ```
 
 ### Module responsibilities
 
 | Module           | Responsibility                                                        |
 |------------------|-----------------------------------------------------------------------|
-| `ui_module`      | All GPUI rendering: 3-panel layout, request editor, response viewer   |
+| `ui_module`      | All GPUI rendering: tab bar, sidebar tree, request editor, response   |
 | `network_module` | Async HTTP calls via `reqwest` (GET, POST, PUT, DELETE)               |
 | `storage_module` | Read/write request collections and env files from local filesystem    |
 
 ## UI Layout
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Sidebar (240 px)  │  Request Editor (flex)  │ Response  │
-│                    │                         │ (420 px)  │
-│  📁 collection/    │  URL · Method · Headers │           │
-│    📄 get-users    │  Body (JSON)            │  Status   │
-│    📄 post-login   │                         │  Time     │
-│  📁 auth/          │  {{base_url}}/endpoint  │  Body     │
-│    📄 refresh      │                         │           │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Sidebar (240 px)  │ [Tab 1] [Tab 2] [+]  │  Response        │
+│                    │──────────────────────│  (420 px)        │
+│  📁 jsonplaceholder│  GET ▾  URL input    │                  │
+│    📄 get-posts    │  Headers             │  200 OK  42 ms   │
+│    📄 create-post  │  Body (JSON)         │                  │
+│  📁 httpbin        │                      │  { "id": 101 }   │
+│    📄 get-anything │  [Save]  [Send]      │                  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Goals (v2) — In Progress
+## Goals (v3) — In Progress
 
-- [x] Sidebar file-explorer: read `~/Documents/Makako/` as a directory tree
-- [x] Tree node model: `CollectionNode::Folder` / `CollectionNode::Request`
-- [x] Collapsible folder nodes with indented children
-- [x] Click on a `.json` file → load request into editor
-- [x] Environment variables: `env.json` in collection root
-- [x] `{{variable}}` interpolation applied to URL, headers, and body before sending
+- [x] **Tab system:** `TabState` struct holding all per-request state; `tabs: Vec<TabState>` + `active_tab`
+- [x] **Tab bar UI:** row of tab buttons above the editor; `+` button opens a new blank tab
+- [x] **Tab isolation:** Send, URL edits, and responses are scoped to the active tab only
+- [ ] **Code snippet export:** translate active request to `cURL`, `fetch` (JS), or `reqwest` (Rust)
+- [ ] **Test assertions:** simple JSON DSL (`{"expect_status": 200, "expect_body_contains": "id"}`) evaluated after each response
+- [ ] **GraphQL support:** dedicated Query + Variables editor body mode
 
 ## Non-Goals
 
 - No cloud sync or user accounts
-- No GraphQL, gRPC, or WebSockets (v1/v2)
+- No multiple OS windows — single app window
+- No WebSockets or SSE (v3)
 - No automatic OAuth2 flows — pass tokens manually in headers
-- No multiple open tabs (v2) — one active request at a time
 - No `.bru` format parsing — JSON collections for now
+- No embedded JS engine (v3) — assertions use a lightweight Rust DSL
 
 ## Prerequisites
 

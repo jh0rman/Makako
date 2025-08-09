@@ -46,6 +46,41 @@ impl HttpMethod {
     }
 }
 
+// ── TabState ──────────────────────────────────────────────────────────────────
+
+/// All state that belongs to a single open request tab.
+pub struct TabState {
+    pub label: String,
+    pub method: HttpMethod,
+    pub url_input: Entity<InputState>,
+    pub headers_editor: Entity<HeadersEditor>,
+    pub body_input: Entity<InputState>,
+    pub response_panel: Entity<ResponsePanel>,
+}
+
+impl TabState {
+    fn new(window: &mut Window, cx: &mut Context<AppView>) -> Self {
+        let url_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("https://api.example.com/resource")
+        });
+        let headers_editor = cx.new(|cx| HeadersEditor::new(window, cx));
+        let body_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("json")
+                .placeholder("// JSON request body")
+        });
+        let response_panel = cx.new(|_cx| ResponsePanel::new());
+        Self {
+            label: "New Tab".to_string(),
+            method: HttpMethod::Get,
+            url_input,
+            headers_editor,
+            body_input,
+            response_panel,
+        }
+    }
+}
+
 // ── Sidebar tree helpers ───────────────────────────────────────────────────────
 
 #[derive(Clone, PartialEq)]
@@ -62,7 +97,6 @@ struct SidebarItem {
     depth: usize,
 }
 
-/// Flattens the visible portion of the collection tree into a linear list.
 fn flatten_visible(
     nodes: &[CollectionNode],
     depth: usize,
@@ -98,43 +132,25 @@ fn flatten_visible(
 // ── AppView ───────────────────────────────────────────────────────────────────
 
 pub struct AppView {
-    method: HttpMethod,
-    url_input: Entity<InputState>,
-    headers_editor: Entity<HeadersEditor>,
-    body_input: Entity<InputState>,
-    response_panel: Entity<ResponsePanel>,
+    // Tab state
+    tabs: Vec<TabState>,
+    active_tab: usize,
 
     // Sidebar state
-    collection_dir: PathBuf,  // where Save writes new files
+    collection_dir: PathBuf,
     tree: Vec<CollectionNode>,
     expanded: HashSet<PathBuf>,
-
-    // Active environment — loaded from env.json in the current collection folder.
     active_env: HashMap<String, String>,
 }
 
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let url_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("https://api.example.com/resource")
-        });
-        let headers_editor = cx.new(|cx| HeadersEditor::new(window, cx));
-        let body_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("json")
-                .placeholder("// JSON request body")
-        });
-        let response_panel = cx.new(|_cx| ResponsePanel::new());
         let collection_dir = storage_module::default_collection_dir();
         let tree = storage_module::load_collection_tree(&storage_module::makako_root_dir());
         let active_env = storage_module::load_env(&collection_dir);
-
         Self {
-            method: HttpMethod::Get,
-            url_input,
-            headers_editor,
-            body_input,
-            response_panel,
+            tabs: vec![TabState::new(window, cx)],
+            active_tab: 0,
             collection_dir,
             tree,
             expanded: HashSet::new(),
@@ -155,56 +171,77 @@ impl AppView {
 
 impl Render for AppView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let method = self.method;
+        let active = self.active_tab;
+        let method = self.tabs[active].method;
+
+        // ── Tab bar listeners ─────────────────────────────────────────────────
+        let tab_count = self.tabs.len();
+        let tab_listeners: Vec<_> = (0..tab_count)
+            .map(|i| {
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.active_tab = i;
+                    cx.notify();
+                })
+            })
+            .collect();
+
+        let on_new_tab = cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.tabs.push(TabState::new(window, cx));
+            this.active_tab = this.tabs.len() - 1;
+            cx.notify();
+        });
 
         // ── Method listeners ─────────────────────────────────────────────────
         let on_get = cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.method = HttpMethod::Get;
+            this.tabs[this.active_tab].method = HttpMethod::Get;
             cx.notify();
         });
         let on_post = cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.method = HttpMethod::Post;
+            this.tabs[this.active_tab].method = HttpMethod::Post;
             cx.notify();
         });
         let on_put = cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.method = HttpMethod::Put;
+            this.tabs[this.active_tab].method = HttpMethod::Put;
             cx.notify();
         });
         let on_delete = cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.method = HttpMethod::Delete;
+            this.tabs[this.active_tab].method = HttpMethod::Delete;
             cx.notify();
         });
 
         // ── Send ─────────────────────────────────────────────────────────────
         let on_send = cx.listener(|this, _: &ClickEvent, _, cx| {
+            let active = this.active_tab;
             let env = &this.active_env;
 
             let url = storage_module::interpolate(
-                &this.url_input.read(cx).value(),
+                &this.tabs[active].url_input.read(cx).value(),
                 env,
             );
-            let method = this.method.label().to_string();
-            let headers = this.headers_editor
+            let method = this.tabs[active].method.label().to_string();
+            let headers = this.tabs[active]
+                .headers_editor
                 .read(cx)
                 .headers(cx)
                 .into_iter()
                 .map(|(k, v)| (k, storage_module::interpolate(&v, env)))
                 .collect();
             let body = {
-                let raw = this.body_input.read(cx).value().to_string();
+                let raw = this.tabs[active].body_input.read(cx).value().to_string();
                 let b = storage_module::interpolate(&raw, env);
                 if b.trim().is_empty() { None } else { Some(b) }
             };
 
             let req = HttpRequest { method, url, headers, body };
 
-            this.response_panel.update(cx, |panel, cx| {
+            this.tabs[active].response_panel.update(cx, |panel, cx| {
                 panel.loading = true;
                 panel.response = None;
                 panel.error = None;
                 cx.notify();
             });
 
+            // Capture `active` by value so the async closure updates the right tab.
             cx.spawn(async move |view, async_cx| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 std::thread::spawn(move || {
@@ -214,7 +251,7 @@ impl Render for AppView {
                 let result = rx.await.unwrap_or_else(|_| Err("thread panicked".to_string()));
 
                 view.update(async_cx, |this, cx| {
-                    this.response_panel.update(cx, |panel, cx| {
+                    this.tabs[active].response_panel.update(cx, |panel, cx| {
                         panel.loading = false;
                         match result {
                             Ok(resp) => {
@@ -236,7 +273,8 @@ impl Render for AppView {
 
         // ── Save ─────────────────────────────────────────────────────────────
         let on_save = cx.listener(|this, _: &ClickEvent, _, cx| {
-            let url = this.url_input.read(cx).value().to_string();
+            let active = this.active_tab;
+            let url = this.tabs[active].url_input.read(cx).value().to_string();
             let name = url
                 .trim_end_matches('/')
                 .rsplit('/')
@@ -246,22 +284,25 @@ impl Render for AppView {
                 .to_string();
 
             let req = SavedRequest {
-                name,
-                method: this.method.label().to_string(),
+                name: name.clone(),
+                method: this.tabs[active].method.label().to_string(),
                 url,
-                headers: this.headers_editor.read(cx).headers(cx),
-                body: this.body_input.read(cx).value().to_string(),
+                headers: this.tabs[active].headers_editor.read(cx).headers(cx),
+                body: this.tabs[active].body_input.read(cx).value().to_string(),
             };
 
             let dir = this.collection_dir.clone();
             match storage_module::save_request(&dir, &req) {
-                Ok(_) => this.refresh_tree(),
+                Ok(_) => {
+                    this.tabs[active].label = name;
+                    this.refresh_tree();
+                }
                 Err(e) => eprintln!("[Makako] save error: {e}"),
             }
             cx.notify();
         });
 
-        // ── Sidebar tree: flatten visible nodes then create one listener each ─
+        // ── Sidebar listeners ─────────────────────────────────────────────────
         let items = self.visible_sidebar_items();
 
         let sidebar_listeners: Vec<_> = items
@@ -281,20 +322,35 @@ impl Render for AppView {
                         let Ok(req) = storage_module::load_request(&path) else {
                             return;
                         };
-                        // Load the env.json from this request's parent folder.
                         if let Some(parent) = path.parent() {
                             this.active_env = storage_module::load_env(parent);
                         }
-                        this.method = HttpMethod::from_str(&req.method);
-                        this.url_input.update(cx, |s, cx| s.set_value(req.url, window, cx));
-                        this.body_input.update(cx, |s, cx| s.set_value(req.body, window, cx));
-                        this.headers_editor
+                        let active = this.active_tab;
+                        this.tabs[active].label = req.name.clone();
+                        this.tabs[active].method = HttpMethod::from_str(&req.method);
+                        this.tabs[active]
+                            .url_input
+                            .update(cx, |s, cx| s.set_value(req.url, window, cx));
+                        this.tabs[active]
+                            .body_input
+                            .update(cx, |s, cx| s.set_value(req.body, window, cx));
+                        this.tabs[active]
+                            .headers_editor
                             .update(cx, |he, cx| he.load_headers(req.headers, window, cx));
                         cx.notify();
                     }
                 })
             })
             .collect();
+
+        // Snapshot entity handles for the active tab before building the tree.
+        let url_input = self.tabs[active].url_input.clone();
+        let headers_editor = self.tabs[active].headers_editor.clone();
+        let body_input = self.tabs[active].body_input.clone();
+        let response_panel = self.tabs[active].response_panel.clone();
+
+        // Snapshot tab labels for the tab bar (avoid borrowing self inside .map).
+        let tab_labels: Vec<String> = self.tabs.iter().map(|t| t.label.clone()).collect();
 
         // ── Layout ───────────────────────────────────────────────────────────
         div()
@@ -311,7 +367,6 @@ impl Render for AppView {
                     .flex_col()
                     .bg(rgb(0x1a1a2e))
                     .pt_3()
-                    // Section label
                     .child(
                         div()
                             .px_3()
@@ -321,7 +376,6 @@ impl Render for AppView {
                             .text_color(rgb(0x555577))
                             .child("COLLECTIONS"),
                     )
-                    // Tree rows
                     .children(
                         items
                             .iter()
@@ -338,7 +392,6 @@ impl Render for AppView {
                                     }
                                     SidebarKind::Request => ("·", rgb(0x445577), rgb(0x9999bb)),
                                 };
-
                                 div()
                                     .id(("tree-item", i))
                                     .flex()
@@ -370,7 +423,7 @@ impl Render for AppView {
                             }),
                     ),
             )
-            // ── Central editor ────────────────────────────────────
+            // ── Central editor + tab bar ───────────────────────────
             .child(
                 div()
                     .flex_1()
@@ -378,7 +431,57 @@ impl Render for AppView {
                     .flex()
                     .flex_col()
                     .bg(rgb(0x24243e))
-                    // Request bar
+                    // ── Tab bar ───────────────────────────────────
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .bg(rgb(0x1a1a32))
+                            .border_b_1()
+                            .border_color(rgb(0x2a2a48))
+                            .children(
+                                tab_labels
+                                    .into_iter()
+                                    .zip(tab_listeners)
+                                    .enumerate()
+                                    .map(|(i, (label, on_click))| {
+                                        let is_active = i == active;
+                                        div()
+                                            .id(("tab-btn", i))
+                                            .px_4()
+                                            .py_2()
+                                            .cursor_pointer()
+                                            .text_sm()
+                                            .border_b_2()
+                                            .when(is_active, |s| {
+                                                s.border_color(rgb(0x6677cc))
+                                                    .text_color(rgb(0xddddff))
+                                                    .bg(rgb(0x24243e))
+                                            })
+                                            .when(!is_active, |s| {
+                                                s.border_color(rgb(0x00000000))
+                                                    .text_color(rgb(0x666688))
+                                                    .hover(|s| s.bg(rgb(0x20203a)))
+                                            })
+                                            .on_click(on_click)
+                                            .child(SharedString::from(label))
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("btn-new-tab")
+                                    .px_3()
+                                    .py_2()
+                                    .cursor_pointer()
+                                    .text_sm()
+                                    .text_color(rgb(0x555577))
+                                    .hover(|s| s.text_color(rgb(0x9999bb)))
+                                    .on_click(on_new_tab)
+                                    .child("+"),
+                            ),
+                    )
+                    // ── Request bar ───────────────────────────────
                     .child(
                         div()
                             .flex()
@@ -421,7 +524,7 @@ impl Render for AppView {
                                             .on_click(on_delete),
                                     ),
                             )
-                            .child(div().flex_1().child(Input::new(&self.url_input)))
+                            .child(div().flex_1().child(Input::new(&url_input)))
                             .child(
                                 Button::new("btn-save")
                                     .label("Save")
@@ -435,7 +538,7 @@ impl Render for AppView {
                                     .on_click(on_send),
                             ),
                     )
-                    // Headers section
+                    // ── Headers section ───────────────────────────
                     .child(
                         div()
                             .flex()
@@ -450,9 +553,9 @@ impl Render for AppView {
                                     .text_color(rgb(0x7777aa))
                                     .child("Headers"),
                             )
-                            .child(self.headers_editor.clone()),
+                            .child(headers_editor),
                     )
-                    // Body section
+                    // ── Body section ──────────────────────────────
                     .child(
                         div()
                             .flex_1()
@@ -471,7 +574,7 @@ impl Render for AppView {
                                     .flex_1()
                                     .px_3()
                                     .pb_3()
-                                    .child(Input::new(&self.body_input).h_full()),
+                                    .child(Input::new(&body_input).h_full()),
                             ),
                     ),
             )
@@ -480,7 +583,7 @@ impl Render for AppView {
                 div()
                     .w(px(420.0))
                     .h_full()
-                    .child(self.response_panel.clone()),
+                    .child(response_panel),
             )
     }
 }
