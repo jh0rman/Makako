@@ -4,9 +4,8 @@ mod response_panel;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use gpui::{ClickEvent, Context, Entity, SharedString, Window, div, prelude::*, px, rgb};
+use gpui::{ClickEvent, Context, Entity, FontWeight, SharedString, Window, div, prelude::*, px, rgb};
 use gpui_component::{
-    Selectable,
     button::{Button, ButtonVariants},
     input::{Input, InputState},
 };
@@ -16,6 +15,35 @@ use crate::snippet_module::{self, SnippetLang};
 use crate::storage_module::{self, CollectionNode, SavedRequest};
 use headers_editor::HeadersEditor;
 use response_panel::ResponsePanel;
+
+// ── Color palette ─────────────────────────────────────────────────────────────
+// Backgrounds — layered from deep (sidebar/panel) to surface (editor) to elevated (bars)
+const C_DEEP: u32 = 0x0c0c1c;        // sidebar, response panel
+const C_SURFACE: u32 = 0x131326;     // editor main area
+const C_ELEVATED: u32 = 0x191932;    // tab bar, request bar
+const C_HOVER: u32 = 0x1c1c38;       // hover state
+
+// Borders
+const C_BORDER_SUBTLE: u32 = 0x1a1a34;
+const C_BORDER: u32 = 0x252548;
+
+// Text
+const C_TEXT_BRIGHT: u32 = 0xe2e0ff;
+const C_TEXT_DIM: u32 = 0x6868a0;
+const C_TEXT_MUTED: u32 = 0x38385a;
+
+// Accent (indigo-purple)
+const C_ACCENT: u32 = 0x7c6af5;
+
+// HTTP method colors  (fg, bg)
+const GET_FG: u32 = 0x58a6ff;
+const GET_BG: u32 = 0x0c1c38;
+const POST_FG: u32 = 0x4ecb8a;
+const POST_BG: u32 = 0x0c2a1a;
+const PUT_FG: u32 = 0xf5a020;
+const PUT_BG: u32 = 0x281800;
+const DEL_FG: u32 = 0xff6565;
+const DEL_BG: u32 = 0x280c0c;
 
 // ── HTTP method ───────────────────────────────────────────────────────────────
 
@@ -47,9 +75,17 @@ impl HttpMethod {
     }
 }
 
+fn method_colors_for(method_str: &str) -> u32 {
+    match method_str {
+        "POST" => POST_FG,
+        "PUT" => PUT_FG,
+        "DELETE" => DEL_FG,
+        _ => GET_FG,
+    }
+}
+
 // ── TabState ──────────────────────────────────────────────────────────────────
 
-/// All state that belongs to a single open request tab.
 pub struct TabState {
     pub label: String,
     pub method: HttpMethod,
@@ -87,7 +123,7 @@ impl TabState {
 #[derive(Clone, PartialEq)]
 enum SidebarKind {
     Folder { expanded: bool },
-    Request,
+    Request { method: String },
 }
 
 #[derive(Clone)]
@@ -118,11 +154,11 @@ fn flatten_visible(
                     flatten_visible(children, depth + 1, expanded, out);
                 }
             }
-            CollectionNode::Request { name, path } => {
+            CollectionNode::Request { name, path, method } => {
                 out.push(SidebarItem {
                     name: name.clone(),
                     path: path.clone(),
-                    kind: SidebarKind::Request,
+                    kind: SidebarKind::Request { method: method.clone() },
                     depth,
                 });
             }
@@ -133,11 +169,8 @@ fn flatten_visible(
 // ── AppView ───────────────────────────────────────────────────────────────────
 
 pub struct AppView {
-    // Tab state
     tabs: Vec<TabState>,
     active_tab: usize,
-
-    // Sidebar state
     collection_dir: PathBuf,
     tree: Vec<CollectionNode>,
     expanded: HashSet<PathBuf>,
@@ -243,7 +276,6 @@ impl Render for AppView {
                 cx.notify();
             });
 
-            // Capture `active` by value so the async closure updates the right tab.
             cx.spawn(async move |view, async_cx| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 std::thread::spawn(move || {
@@ -389,7 +421,6 @@ impl Render for AppView {
         let body_input = self.tabs[active].body_input.clone();
         let response_panel = self.tabs[active].response_panel.clone();
 
-        // Snapshot tab labels for the tab bar (avoid borrowing self inside .map).
         let tab_labels: Vec<String> = self.tabs.iter().map(|t| t.label.clone()).collect();
 
         // ── Layout ───────────────────────────────────────────────────────────
@@ -398,88 +429,153 @@ impl Render for AppView {
             .flex_row()
             .w_full()
             .h_full()
-            // ── Sidebar ───────────────────────────────────────────
+            .bg(rgb(C_DEEP))
+
+            // ── Sidebar ────────────────────────────────────────────────────
             .child(
                 div()
-                    .w(px(240.0))
+                    .w(px(220.0))
                     .h_full()
                     .flex()
                     .flex_col()
-                    .bg(rgb(0x1a1a2e))
-                    .pt_3()
+                    .bg(rgb(C_DEEP))
+                    .border_r_1()
+                    .border_color(rgb(C_BORDER_SUBTLE))
+
+                    // Sidebar header
                     .child(
                         div()
-                            .px_3()
-                            .pb_2()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(rgb(0x555577))
-                            .child("COLLECTIONS"),
-                    )
-                    .children(
-                        items
-                            .iter()
-                            .zip(sidebar_listeners)
-                            .enumerate()
-                            .map(|(i, (item, on_click))| {
-                                let indent = px(8.0 + item.depth as f32 * 16.0);
-                                let (icon, icon_color, name_color) = match &item.kind {
-                                    SidebarKind::Folder { expanded: true } => {
-                                        ("▾", rgb(0x7788bb), rgb(0xccccee))
-                                    }
-                                    SidebarKind::Folder { expanded: false } => {
-                                        ("▸", rgb(0x556699), rgb(0xaaaacc))
-                                    }
-                                    SidebarKind::Request => ("·", rgb(0x445577), rgb(0x9999bb)),
-                                };
+                            .px_4()
+                            .pt_4()
+                            .pb_3()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .border_b_1()
+                            .border_color(rgb(C_BORDER_SUBTLE))
+                            .child(
                                 div()
-                                    .id(("tree-item", i))
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap_1()
-                                    .pl(indent)
-                                    .pr_2()
-                                    .py_1()
-                                    .mx_1()
-                                    .rounded_md()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(0x252540)))
-                                    .on_click(on_click)
-                                    .child(
-                                        div()
-                                            .w(px(12.0))
-                                            .text_xs()
-                                            .text_color(icon_color)
-                                            .child(icon),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .text_sm()
-                                            .text_color(name_color)
-                                            .child(SharedString::from(item.name.clone())),
-                                    )
-                            }),
+                                    .w(px(6.0))
+                                    .h(px(6.0))
+                                    .rounded_full()
+                                    .bg(rgb(C_ACCENT)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(C_TEXT_DIM))
+                                    .child("COLLECTIONS"),
+                            ),
+                    )
+
+                    // Sidebar items
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .pt_2()
+                            .children(
+                                items.iter().zip(sidebar_listeners).enumerate().map(
+                                    |(i, (item, on_click))| {
+                                        let indent = px(10.0 + item.depth as f32 * 14.0);
+                                        match &item.kind {
+                                            SidebarKind::Folder { expanded } => {
+                                                let icon = if *expanded { "▾" } else { "▸" };
+                                                div()
+                                                    .id(("tree-item", i))
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .pl(indent)
+                                                    .pr_3()
+                                                    .py_1()
+                                                    .mx_2()
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(rgb(C_HOVER)))
+                                                    .on_click(on_click)
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(C_TEXT_DIM))
+                                                            .child(icon),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex_1()
+                                                            .text_sm()
+                                                            .text_color(rgb(C_TEXT_BRIGHT))
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .child(SharedString::from(
+                                                                item.name.clone(),
+                                                            )),
+                                                    )
+                                            }
+                                            SidebarKind::Request { method: m } => {
+                                                let method_color = method_colors_for(m);
+                                                div()
+                                                    .id(("tree-item", i))
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .pl(indent)
+                                                    .pr_3()
+                                                    .py_1()
+                                                    .mx_2()
+                                                    .rounded_md()
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.bg(rgb(C_HOVER)))
+                                                    .on_click(on_click)
+                                                    .child(
+                                                        // Method badge
+                                                        div()
+                                                            .px_1()
+                                                            .rounded_md()
+                                                            .text_color(rgb(method_color))
+                                                            .text_xs()
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .child(SharedString::from(m.clone())),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex_1()
+                                                            .text_sm()
+                                                            .text_color(rgb(0xaaaacc))
+                                                            .child(SharedString::from(
+                                                                item.name.clone(),
+                                                            )),
+                                                    )
+                                            }
+                                        }
+                                    },
+                                ),
+                            ),
                     ),
             )
-            // ── Central editor + tab bar ───────────────────────────
+
+            // ── Central editor ─────────────────────────────────────────────
             .child(
                 div()
                     .flex_1()
                     .h_full()
                     .flex()
                     .flex_col()
-                    .bg(rgb(0x24243e))
-                    // ── Tab bar ───────────────────────────────────
+                    .bg(rgb(C_SURFACE))
+
+                    // ── Tab bar ───────────────────────────────────────────
                     .child(
                         div()
                             .flex()
                             .flex_row()
                             .items_center()
-                            .bg(rgb(0x1a1a32))
+                            .bg(rgb(C_ELEVATED))
                             .border_b_1()
-                            .border_color(rgb(0x2a2a48))
+                            .border_color(rgb(C_BORDER_SUBTLE))
                             .children(
                                 tab_labels
                                     .into_iter()
@@ -495,14 +591,17 @@ impl Render for AppView {
                                             .text_sm()
                                             .border_b_2()
                                             .when(is_active, |s| {
-                                                s.border_color(rgb(0x6677cc))
-                                                    .text_color(rgb(0xddddff))
-                                                    .bg(rgb(0x24243e))
+                                                s.border_color(rgb(C_ACCENT))
+                                                    .text_color(rgb(C_TEXT_BRIGHT))
+                                                    .bg(rgb(C_SURFACE))
                                             })
                                             .when(!is_active, |s| {
                                                 s.border_color(rgb(0x00000000))
-                                                    .text_color(rgb(0x666688))
-                                                    .hover(|s| s.bg(rgb(0x20203a)))
+                                                    .text_color(rgb(C_TEXT_MUTED))
+                                                    .hover(|s| {
+                                                        s.bg(rgb(C_HOVER))
+                                                            .text_color(rgb(C_TEXT_DIM))
+                                                    })
                                             })
                                             .on_click(on_click)
                                             .child(SharedString::from(label))
@@ -511,60 +610,134 @@ impl Render for AppView {
                             .child(
                                 div()
                                     .id("btn-new-tab")
-                                    .px_3()
-                                    .py_2()
+                                    .w(px(36.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .cursor_pointer()
-                                    .text_sm()
-                                    .text_color(rgb(0x555577))
-                                    .hover(|s| s.text_color(rgb(0x9999bb)))
+                                    .text_color(rgb(C_TEXT_MUTED))
+                                    .hover(|s| {
+                                        s.text_color(rgb(C_TEXT_DIM)).bg(rgb(C_HOVER))
+                                    })
                                     .on_click(on_new_tab)
                                     .child("+"),
                             ),
                     )
-                    // ── Request bar ───────────────────────────────
+
+                    // ── Request bar ───────────────────────────────────────
                     .child(
                         div()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_2()
-                            .p_3()
-                            .bg(rgb(0x1e1e32))
+                            .px_3()
+                            .py_2()
+                            .bg(rgb(C_ELEVATED))
+                            .border_b_1()
+                            .border_color(rgb(C_BORDER_SUBTLE))
+
+                            // Method selector — colored pill buttons
                             .child(
                                 div()
                                     .flex()
                                     .flex_row()
                                     .gap_1()
+                                    .p_1()
+                                    .bg(rgb(C_DEEP))
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(rgb(C_BORDER_SUBTLE))
                                     .child(
-                                        Button::new("btn-get")
-                                            .label("GET")
-                                            .ghost()
-                                            .selected(method == HttpMethod::Get)
-                                            .on_click(on_get),
+                                        div()
+                                            .id("m-get")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .when(method == HttpMethod::Get, |s| {
+                                                s.bg(rgb(GET_BG)).text_color(rgb(GET_FG))
+                                            })
+                                            .when(method != HttpMethod::Get, |s| {
+                                                s.text_color(rgb(C_TEXT_MUTED)).hover(|s| {
+                                                    s.text_color(rgb(GET_FG))
+                                                        .bg(rgb(GET_BG))
+                                                })
+                                            })
+                                            .on_click(on_get)
+                                            .child("GET"),
                                     )
                                     .child(
-                                        Button::new("btn-post")
-                                            .label("POST")
-                                            .ghost()
-                                            .selected(method == HttpMethod::Post)
-                                            .on_click(on_post),
+                                        div()
+                                            .id("m-post")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .when(method == HttpMethod::Post, |s| {
+                                                s.bg(rgb(POST_BG)).text_color(rgb(POST_FG))
+                                            })
+                                            .when(method != HttpMethod::Post, |s| {
+                                                s.text_color(rgb(C_TEXT_MUTED)).hover(|s| {
+                                                    s.text_color(rgb(POST_FG))
+                                                        .bg(rgb(POST_BG))
+                                                })
+                                            })
+                                            .on_click(on_post)
+                                            .child("POST"),
                                     )
                                     .child(
-                                        Button::new("btn-put")
-                                            .label("PUT")
-                                            .ghost()
-                                            .selected(method == HttpMethod::Put)
-                                            .on_click(on_put),
+                                        div()
+                                            .id("m-put")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .when(method == HttpMethod::Put, |s| {
+                                                s.bg(rgb(PUT_BG)).text_color(rgb(PUT_FG))
+                                            })
+                                            .when(method != HttpMethod::Put, |s| {
+                                                s.text_color(rgb(C_TEXT_MUTED)).hover(|s| {
+                                                    s.text_color(rgb(PUT_FG))
+                                                        .bg(rgb(PUT_BG))
+                                                })
+                                            })
+                                            .on_click(on_put)
+                                            .child("PUT"),
                                     )
                                     .child(
-                                        Button::new("btn-delete")
-                                            .label("DELETE")
-                                            .ghost()
-                                            .selected(method == HttpMethod::Delete)
-                                            .on_click(on_delete),
+                                        div()
+                                            .id("m-del")
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .when(method == HttpMethod::Delete, |s| {
+                                                s.bg(rgb(DEL_BG)).text_color(rgb(DEL_FG))
+                                            })
+                                            .when(method != HttpMethod::Delete, |s| {
+                                                s.text_color(rgb(C_TEXT_MUTED)).hover(|s| {
+                                                    s.text_color(rgb(DEL_FG))
+                                                        .bg(rgb(DEL_BG))
+                                                })
+                                            })
+                                            .on_click(on_delete)
+                                            .child("DEL"),
                                     ),
                             )
+
+                            // URL input
                             .child(div().flex_1().child(Input::new(&url_input)))
+
+                            // Save + Send
                             .child(
                                 Button::new("btn-save")
                                     .label("Save")
@@ -577,14 +750,16 @@ impl Render for AppView {
                                     .primary()
                                     .on_click(on_send),
                             )
+
+                            // Snippet buttons
                             .child(
                                 div()
                                     .flex()
                                     .flex_row()
                                     .gap_1()
-                                    .border_l_1()
-                                    .border_color(rgb(0x2a2a48))
                                     .pl_2()
+                                    .border_l_1()
+                                    .border_color(rgb(C_BORDER))
                                     .child(
                                         Button::new("btn-curl")
                                             .label("cURL")
@@ -605,51 +780,92 @@ impl Render for AppView {
                                     ),
                             ),
                     )
-                    // ── Headers section ───────────────────────────
+
+                    // ── Headers section ───────────────────────────────────
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .border_b_1()
-                            .border_color(rgb(0x2e2e4a))
+                            .border_color(rgb(C_BORDER_SUBTLE))
+                            // Section header
                             .child(
                                 div()
-                                    .px_3()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_4()
                                     .py_2()
-                                    .text_sm()
-                                    .text_color(rgb(0x7777aa))
-                                    .child("Headers"),
+                                    .bg(rgb(C_DEEP))
+                                    .child(
+                                        div()
+                                            .w(px(2.0))
+                                            .h(px(10.0))
+                                            .rounded_md()
+                                            .bg(rgb(C_ACCENT)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(rgb(C_TEXT_DIM))
+                                            .child("HEADERS"),
+                                    ),
                             )
                             .child(headers_editor),
                     )
-                    // ── Body section ──────────────────────────────
+
+                    // ── Body section ──────────────────────────────────────
                     .child(
                         div()
                             .flex_1()
                             .flex()
                             .flex_col()
+                            // Section header
                             .child(
                                 div()
-                                    .px_3()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_2()
+                                    .px_4()
                                     .py_2()
-                                    .text_sm()
-                                    .text_color(rgb(0x7777aa))
-                                    .child("Body"),
+                                    .bg(rgb(C_DEEP))
+                                    .border_b_1()
+                                    .border_color(rgb(C_BORDER_SUBTLE))
+                                    .child(
+                                        div()
+                                            .w(px(2.0))
+                                            .h(px(10.0))
+                                            .rounded_md()
+                                            .bg(rgb(C_ACCENT)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(rgb(C_TEXT_DIM))
+                                            .child("BODY"),
+                                    ),
                             )
                             .child(
                                 div()
                                     .flex_1()
                                     .px_3()
-                                    .pb_3()
+                                    .py_3()
                                     .child(Input::new(&body_input).h_full()),
                             ),
                     ),
             )
-            // ── Response panel ────────────────────────────────────
+
+            // ── Response panel ─────────────────────────────────────────────
             .child(
                 div()
-                    .w(px(420.0))
+                    .w(px(380.0))
                     .h_full()
+                    .border_l_1()
+                    .border_color(rgb(C_BORDER_SUBTLE))
                     .child(response_panel),
             )
     }

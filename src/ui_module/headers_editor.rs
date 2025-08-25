@@ -1,8 +1,12 @@
-use gpui::{App, ClickEvent, Context, Entity, Window, div, prelude::*, px, rgb};
+use gpui::{App, ClickEvent, Context, Entity, FontWeight, Window, div, prelude::*, px, rgb};
 use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
 };
+
+const C_DEEP: u32 = 0x0c0c1c;
+const C_TEXT_MUTED: u32 = 0x38385a;
+const C_BORDER_SUBTLE: u32 = 0x1a1a34;
 
 // ── HeaderRow ─────────────────────────────────────────────────────────────────
 
@@ -32,7 +36,6 @@ impl HeadersEditor {
         }
     }
 
-    /// Replaces all rows with the given (key, value) pairs.
     pub fn load_headers(
         &mut self,
         pairs: Vec<(String, String)>,
@@ -55,7 +58,6 @@ impl HeadersEditor {
         cx.notify();
     }
 
-    /// Returns non-empty (key, value) pairs for use in HTTP requests.
     pub fn headers(&self, cx: &App) -> Vec<(String, String)> {
         self.rows
             .iter()
@@ -72,13 +74,11 @@ impl HeadersEditor {
 
 impl Render for HeadersEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // ── Listeners ── must be created before the builder chain ──────────
         let on_add = cx.listener(|this, _: &ClickEvent, window, cx| {
             this.rows.push(HeaderRow::new(window, cx));
             cx.notify();
         });
 
-        // One remove-listener per existing row (captures index by copy).
         let remove_listeners: Vec<_> = (0..self.rows.len())
             .map(|i| {
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -88,11 +88,11 @@ impl Render for HeadersEditor {
             })
             .collect();
 
-        // ── Layout ─────────────────────────────────────────────────────────
         div()
             .flex()
             .flex_col()
-            .gap_1()
+            .bg(rgb(C_DEEP))
+
             // Column labels
             .child(
                 div()
@@ -100,13 +100,29 @@ impl Render for HeadersEditor {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .px_3()
-                    .text_color(rgb(0x666688))
-                    .text_sm()
-                    .child(div().flex_1().child("Key"))
-                    .child(div().flex_1().child("Value"))
-                    .child(div().w(px(28.0))), // spacer aligns with delete btn
+                    .px_4()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(rgb(C_BORDER_SUBTLE))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(C_TEXT_MUTED))
+                            .child("KEY"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(C_TEXT_MUTED))
+                            .child("VALUE"),
+                    )
+                    .child(div().w(px(28.0))),
             )
+
             // Rows
             .children(
                 self.rows
@@ -120,6 +136,9 @@ impl Render for HeadersEditor {
                             .items_center()
                             .gap_2()
                             .px_3()
+                            .py_1()
+                            .border_b_1()
+                            .border_color(rgb(C_BORDER_SUBTLE))
                             .child(div().flex_1().child(Input::new(&row.key)))
                             .child(div().flex_1().child(Input::new(&row.value)))
                             .child(
@@ -130,14 +149,18 @@ impl Render for HeadersEditor {
                             )
                     }),
             )
+
             // Add row button
             .child(
-                div().px_3().child(
-                    Button::new("btn-add-header")
-                        .label("+ Add Header")
-                        .ghost()
-                        .on_click(on_add),
-                ),
+                div()
+                    .px_3()
+                    .py_1()
+                    .child(
+                        Button::new("btn-add-header")
+                            .label("+ Add Header")
+                            .ghost()
+                            .on_click(on_add),
+                    ),
             )
     }
 }

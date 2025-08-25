@@ -32,6 +32,8 @@ pub enum CollectionNode {
         /// Display name — file stem (e.g. "get-users").
         name: String,
         path: PathBuf,
+        /// HTTP method read from the file (e.g. "GET"). Falls back to "GET".
+        method: String,
     },
 }
 
@@ -91,7 +93,12 @@ pub fn load_collection_tree(root: &Path) -> Vec<CollectionNode> {
                 path,
             });
         } else if path.extension().is_some_and(|e| e == "json") && name != "env" {
-            requests.push(CollectionNode::Request { name, path });
+            let method = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v.get("method")?.as_str().map(|m| m.to_uppercase()))
+                .unwrap_or_else(|| "GET".to_string());
+            requests.push(CollectionNode::Request { name, path, method });
         }
     }
 
