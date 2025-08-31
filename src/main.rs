@@ -3,7 +3,10 @@ mod snippet_module;
 mod storage_module;
 mod ui_module;
 
-use gpui::{px, size, App, AppContext, Application, Bounds, WindowBounds, WindowOptions};
+use gpui::{
+    TitlebarOptions, px, point, size, App, AppContext, Application, Bounds, WindowBounds,
+    WindowOptions,
+};
 use gpui_component::Root;
 use ui_module::AppView;
 
@@ -15,12 +18,15 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: None,
+                    appears_transparent: true,
+                    // Position the traffic-light buttons 12px from left, 12px from top.
+                    traffic_light_position: Some(point(px(12.0), px(12.0))),
+                }),
                 ..Default::default()
             },
             |window, cx| {
-                // gpui_component requires Root as the window's top-level view.
-                // Root sets up the theme, focus, dialogs and notification layers
-                // used internally by Input, Button and other components.
                 let app_view = cx.new(|cx| AppView::new(window, cx));
                 cx.new(|cx| Root::new(app_view, window, cx))
             },

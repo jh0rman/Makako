@@ -426,10 +426,64 @@ impl Render for AppView {
         // ── Layout ───────────────────────────────────────────────────────────
         div()
             .flex()
-            .flex_row()
+            .flex_col()
             .w_full()
             .h_full()
             .bg(rgb(C_DEEP))
+
+            // ── Custom titlebar ────────────────────────────────────────────
+            .child(
+                div()
+                    .h(px(36.0))
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    // Leave 76px on the left for the macOS traffic-light buttons
+                    .pl(px(76.0))
+                    .pr_4()
+                    .gap_2()
+                    .bg(rgb(C_DEEP))
+                    .border_b_1()
+                    .border_color(rgb(C_BORDER_SUBTLE))
+                    // Accent dot — app logo placeholder
+                    .child(
+                        div()
+                            .w(px(8.0))
+                            .h(px(8.0))
+                            .rounded_full()
+                            .bg(rgb(C_ACCENT)),
+                    )
+                    // App name
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0x7070a0))
+                            .child("Makako"),
+                    )
+                    // Flexible spacer
+                    .child(div().flex_1())
+                    // Version badge
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(0x181830))
+                            .text_xs()
+                            .text_color(rgb(C_TEXT_MUTED))
+                            .child("v0.1"),
+                    ),
+            )
+
+            // ── Three-panel row ────────────────────────────────────────────
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_row()
+                    .overflow_hidden()
 
             // ── Sidebar ────────────────────────────────────────────────────
             .child(
@@ -446,8 +500,8 @@ impl Render for AppView {
                     .child(
                         div()
                             .px_4()
-                            .pt_4()
-                            .pb_3()
+                            .pt_2()
+                            .pb_2()
                             .flex()
                             .flex_row()
                             .items_center()
@@ -868,5 +922,6 @@ impl Render for AppView {
                     .border_color(rgb(C_BORDER_SUBTLE))
                     .child(response_panel),
             )
+            ) // close three-panel row .child()
     }
 }
