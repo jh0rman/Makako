@@ -1,0 +1,113 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  BINARY_NAME: makako
+  APP_NAME: Makako
+
+jobs:
+  build:
+    name: Build Universal Binary
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: macos-arm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-arm-cargo-
+
+      # ── Compile ──────────────────────────────────────────────────────────
+
+      - name: Build — Apple Silicon (aarch64)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      # ── Bundle ───────────────────────────────────────────────────────────
+
+      - name: Assemble .app bundle
+        run: |
+          APP_DIR="${{ env.APP_NAME }}.app"
+
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources"
+
+          # Binary
+          cp target/aarch64-apple-darwin/release/${{ env.BINARY_NAME }} "$APP_DIR/Contents/MacOS/${{ env.BINARY_NAME }}"
+          chmod +x "$APP_DIR/Contents/MacOS/${{ env.BINARY_NAME }}"
+
+          # Metadata
+          cp packaging/Info.plist "$APP_DIR/Contents/Info.plist"
+
+          # Inject the current git tag (or commit sha) as the bundle version
+          VERSION="${{ github.ref_name }}"
+          if [[ "$VERSION" == v* ]]; then
+            VERSION="${VERSION#v}"   # strip leading 'v'
+          else
+            VERSION="${{ github.sha }}"
+            VERSION="${VERSION:0:7}"
+          fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_DIR/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_DIR/Contents/Info.plist"
+
+      # ── (Optional) Ad-hoc code signing ───────────────────────────────────
+      # Ad-hoc signing (-) allows the app to run locally without a developer
+      # account. Users may still need to right-click → Open the first time.
+      # For distribution, replace '-' with a Developer ID certificate stored
+      # in the APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD secrets.
+
+      - name: Sign app bundle (ad-hoc)
+        run: |
+          codesign --force --deep --sign - "${{ env.APP_NAME }}.app"
+
+      # ── Package as DMG ───────────────────────────────────────────────────
+
+      - name: Create DMG
+        run: |
+          mkdir -p dist/dmg
+          cp -r "${{ env.APP_NAME }}.app" dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+
+          hdiutil create \
+            -volname "${{ env.APP_NAME }}" \
+            -srcfolder dist/dmg \
+            -ov \
+            -format UDZO \
+            dist/${{ env.APP_NAME }}.dmg
+
+      # ── Upload artifact (every build) ─────────────────────────────────────
+
+      - name: Upload DMG as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-macOS-${{ github.sha }}
+          path: dist/${{ env.APP_NAME }}.dmg
+          retention-days: 14
+
+      # ── Attach to GitHub Release (tag pushes only) ────────────────────────
+
+      - name: Attach DMG to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.APP_NAME }}.dmg
+          generate_release_notes: true
